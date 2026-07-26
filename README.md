@@ -1,1 +1,1 @@
-# triselect
+# triselect-wasm
