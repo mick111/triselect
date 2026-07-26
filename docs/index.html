@@ -233,6 +233,28 @@
       color: var(--wf-bouteille);
     }
 
+    .player-history {
+      margin-top: 10px;
+      padding: 10px 12px;
+      border: 1px solid rgba(29, 91, 63, .16);
+      border-radius: 8px;
+      background: rgba(29, 91, 63, .04);
+    }
+
+    .player-history-title {
+      font-size: .72rem;
+      font-weight: 700;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      color: var(--wf-sapin);
+      margin-bottom: 4px;
+    }
+
+    .player-history-score {
+      font-size: .92rem;
+      color: var(--text-strong);
+    }
+
     /* ── GAME LAYOUT ── */
     .game-header {
       display: flex;
@@ -628,11 +650,6 @@
       color: var(--wf-grey-700);
     }
 
-    .lb-source-label {
-      font-size: .78rem;
-      color: var(--text-muted);
-    }
-
     .lb-err {
       background: #FEF2F2;
       border-radius: 8px;
@@ -872,7 +889,11 @@
         <label class="wf-label" for="team-select">Votre équipe</label>
         <select class="wf-input wf-select" id="team-select"></select>
       </div>
-      <button class="wf-btn wf-btn-primary" onclick="startGame()">Commencer la partie</button>
+      <div class="player-history" id="player-history" style="display:none">
+        <div class="player-history-title">Déjà joué</div>
+        <div class="player-history-score" id="player-history-score"></div>
+      </div>
+      <button class="wf-btn wf-btn-primary" id="start-game-btn" onclick="startGame()">Commencer la partie</button>
       <button class="wf-btn wf-btn-ghost" id="btn-lb">Consulter le classement</button>
     </div>
   </div>
@@ -1045,7 +1066,7 @@
       </div>
       <div class="go-save" id="save-status"></div>
       <div class="btn-row">
-        <button class="wf-btn wf-btn-primary" onclick="startGame()">Rejouer</button>
+        <button class="wf-btn wf-btn-primary" onclick="showLoginScreen(state.player, state.team)">Rejouer</button>
         <button class="wf-btn wf-btn-ghost" id="btn-lb-go">Classement</button>
       </div>
     </div>
@@ -1121,6 +1142,51 @@
     }
     function showHome() { showScreen('screen-home'); }
 
+    function getCookieValue(name) {
+      const match = document.cookie.match(new RegExp('(?:^|; )' + name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '=([^;]*)'));
+      return match ? decodeURIComponent(match[1]) : '';
+    }
+
+    function setCookieValue(name, value) {
+      document.cookie = name + '=' + encodeURIComponent(value) + '; path=/; max-age=31536000';
+    }
+
+    function readPlayerCookie() {
+      return {
+        name: getCookieValue('triselect_player') || '',
+        team: getCookieValue('triselect_team') || ''
+      };
+    }
+
+    function savePlayerCookie(name, team) {
+      setCookieValue('triselect_player', String(name || '').trim());
+      setCookieValue('triselect_team', String(team || '').trim());
+    }
+
+    function applyPlayerProfile(name, team) {
+      const input = document.getElementById('player-name');
+      const select = document.getElementById('team-select');
+      if (input) {
+        const nextName = String(name || '').trim().slice(0, 3).toUpperCase();
+        input.value = nextName;
+      }
+      if (select) {
+        const options = Array.from(select.options).map(option => option.value);
+        const nextTeam = String(team || '').trim();
+        if (nextTeam && options.includes(nextTeam)) {
+          select.value = nextTeam;
+        } else if (options.length) {
+          select.value = options[0];
+        }
+      }
+      updatePlayerHistoryUI();
+    }
+
+    function showLoginScreen(name, team) {
+      showHome();
+      applyPlayerProfile(name, team);
+    }
+
     function getSelectedTeam() {
       const select = document.getElementById('team-select');
       const selected = select ? select.value.trim() : '';
@@ -1143,6 +1209,62 @@
         const current = select.value || '';
         if (!values.includes(current)) select.value = values[0];
       }
+      updatePlayerHistoryUI();
+    }
+
+    function normalizePlayerKey(value) {
+      return String(value || '').trim().toUpperCase();
+    }
+
+    function getEntryTimestamp(entry) {
+      if (entry && typeof entry.timestamp === 'number' && Number.isFinite(entry.timestamp)) return entry.timestamp;
+      if (entry && entry.timestamp) return Number(entry.timestamp);
+      if (entry && entry.date) {
+        const match = String(entry.date).match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+        if (match) return Date.UTC(Number(match[3]), Number(match[2]) - 1, Number(match[1]));
+      }
+      return 0;
+    }
+
+    function readLocalScores() {
+      try {
+        const raw = JSON.parse(localStorage.getItem('triselect_lb') || '[]');
+        return Array.isArray(raw) ? raw : [];
+      } catch (e) { return []; }
+    }
+
+    function getExistingPlayerResult(name, team) {
+      const normalizedName = normalizePlayerKey(name);
+      const normalizedTeam = normalizePlayerKey(team);
+      if (!normalizedName || !normalizedTeam) return null;
+      const matches = readLocalScores()
+        .filter(entry => normalizePlayerKey(entry.name) === normalizedName && normalizePlayerKey(entry.team) === normalizedTeam)
+        .sort((a, b) => getEntryTimestamp(b) - getEntryTimestamp(a));
+      return matches[0] || null;
+    }
+
+    function updatePlayerHistoryUI() {
+      const input = document.getElementById('player-name');
+      const historyEl = document.getElementById('player-history');
+      const historyScoreEl = document.getElementById('player-history-score');
+      const buttonEl = document.getElementById('start-game-btn');
+      if (!historyEl || !historyScoreEl || !buttonEl) return;
+      const name = (input.value.trim() || '').slice(0, 3);
+      const team = getSelectedTeam();
+      if (!name) {
+        historyEl.style.display = 'none';
+        buttonEl.textContent = 'Commencer la partie';
+        return;
+      }
+      const existing = getExistingPlayerResult(name, team);
+      if (existing) {
+        historyEl.style.display = 'block';
+        historyScoreEl.textContent = `Dernier score : ${existing.score} pts • ${existing.acc}% de précision`;
+        buttonEl.textContent = 'Rejouer';
+      } else {
+        historyEl.style.display = 'none';
+        buttonEl.textContent = 'Commencer la partie';
+      }
     }
 
     async function loadTeams() {
@@ -1156,19 +1278,24 @@
         if (teams.length) {
           availableTeams = teams;
           renderTeamOptions(teams);
+          const cookieProfile = readPlayerCookie();
+          applyPlayerProfile(cookieProfile.name, cookieProfile.team);
           return;
         }
       } catch (e) { }
       availableTeams = DEFAULT_TEAMS;
       renderTeamOptions(availableTeams);
+      const cookieProfile = readPlayerCookie();
+      applyPlayerProfile(cookieProfile.name, cookieProfile.team);
     }
 
     // ── GAME INIT ──
     function startGame() {
       const input = document.getElementById('player-name');
-      const name = (input.value.trim() || 'Participant').slice(0, 3);
+      const name = (input.value.trim() || 'Participant').slice(0, 3).toUpperCase();
       const team = getSelectedTeam();
       input.value = name;
+      savePlayerCookie(name, team);
       state = { player: name, team, deck: shuffle(WASTES), idx: 0, score: 0, lives: 4, correct: 0, wrong: 0, timerVal: 15, timerInterval: null, locked: false };
       showScreen('screen-game');
       renderWaste();
@@ -1369,6 +1496,7 @@
       document.getElementById('go-acc').textContent = acc + ' %';
       showScreen('screen-gameover');
       saveLocalScore(acc);
+      savePlayerCookie(state.player, state.team);
       const statusEl = document.getElementById('save-status');
       statusEl.textContent = 'Enregistrement en cours…';
       try {
@@ -1384,9 +1512,9 @@
 
     function saveLocalScore(acc) {
       try {
-        let lb = JSON.parse(localStorage.getItem('triselect_lb') || '[]');
-        lb.push({ name: state.player, team: state.team || 'Equipe 1', score: state.score, acc, date: new Date().toLocaleDateString('fr-FR') });
-        lb.sort((a, b) => b.score - a.score);
+        let lb = readLocalScores();
+        lb.push({ name: state.player, team: state.team || 'Equipe 1', score: state.score, acc, date: new Date().toLocaleDateString('fr-FR'), timestamp: Date.now() });
+        lb.sort((a, b) => getEntryTimestamp(b) - getEntryTimestamp(a));
         localStorage.setItem('triselect_lb', JSON.stringify(lb.slice(0, 50)));
       } catch (e) { }
     }
@@ -1414,8 +1542,7 @@
         errEl.style.display = 'block';
         document.getElementById('lb-badge').className = 'lb-badge local';
         document.getElementById('lb-badge').textContent = 'Local';
-        document.getElementById('lb-source-label').textContent = 'Scores enregistrés sur cet appareil';
-        try {
+          try {
           renderLbRows(JSON.parse(localStorage.getItem('triselect_lb') || '[]'));
         } catch (_) { list.innerHTML = '<div class="lb-empty">Aucune donnée disponible.</div>'; }
       }
@@ -1426,38 +1553,47 @@
       (Array.isArray(lb) ? lb : []).forEach(entry => {
         const team = String(entry.team || entry.name || '').trim() || 'Sans équipe';
         if (!grouped[team]) {
-          grouped[team] = { team, scoreTotal: 0, accTotal: 0, count: 0, date: entry.date || '', participants: [] };
+          grouped[team] = { team, latestByName: {}, date: entry.date || '' };
         }
-        if (Array.isArray(entry.participants) && entry.participants.length > 0) {
-          entry.participants.forEach(p => {
-            if (p.name) {
-              grouped[team].participants.push({ name: p.name, score: Number(p.score || 0), acc: Number(p.acc || 0) });
-              grouped[team].scoreTotal += Number(p.score || 0);
-              grouped[team].accTotal += Number(p.acc || 0);
-              grouped[team].count += 1;
-            }
-          });
-        } else {
-          const participant = String(entry.name || '').trim();
-          if (participant) {
-            grouped[team].participants.push({ name: participant, score: Number(entry.score || 0), acc: Number(entry.acc || 0) });
-            grouped[team].scoreTotal += Number(entry.score || 0);
-            grouped[team].accTotal += Number(entry.acc || 0);
-            grouped[team].count += 1;
+
+        const participants = (Array.isArray(entry.participants) && entry.participants.length > 0)
+          ? entry.participants.map(p => ({
+              name: p.name,
+              score: Number(p.score || 0),
+              acc: Number(p.acc || 0),
+              timestamp: getEntryTimestamp(p) || getEntryTimestamp(entry)
+            }))
+          : (String(entry.name || '').trim()
+            ? [{ name: entry.name, score: Number(entry.score || 0), acc: Number(entry.acc || 0), timestamp: getEntryTimestamp(entry) }]
+            : []);
+
+        participants.forEach(p => {
+          const key = normalizePlayerKey(p.name);
+          if (!key) return;
+          const current = grouped[team].latestByName[key];
+          if (!current || (p.timestamp || 0) > (current.timestamp || 0)) {
+            grouped[team].latestByName[key] = p;
           }
-        }
+        });
+
         grouped[team].date = grouped[team].date || entry.date || '';
       });
 
       return Object.values(grouped)
-        .map(item => ({
-          team: item.team,
-          score: Math.round(item.scoreTotal / item.count),
-          acc: Math.round(item.accTotal / item.count),
-          count: item.count,
-          date: item.date,
-          participants: item.participants
-        }))
+        .map(item => {
+          const participants = Object.values(item.latestByName).sort((a, b) => normalizePlayerKey(a.name).localeCompare(normalizePlayerKey(b.name)));
+          const count = participants.length;
+          const score = count ? Math.round(participants.reduce((sum, p) => sum + Number(p.score || 0), 0) / count) : 0;
+          const acc = count ? Math.round(participants.reduce((sum, p) => sum + Number(p.acc || 0), 0) / count) : 0;
+          return {
+            team: item.team,
+            score,
+            acc,
+            count,
+            date: item.date,
+            participants
+          };
+        })
         .sort((a, b) => b.score - a.score || b.acc - a.acc);
     }
 
@@ -1506,14 +1642,27 @@
     // ── BOOT ──
     document.addEventListener('DOMContentLoaded', () => {
       const playerNameInput = document.getElementById('player-name');
+      const teamSelect = document.getElementById('team-select');
       playerNameInput.addEventListener('input', () => {
         playerNameInput.value = playerNameInput.value.slice(0, 3).toUpperCase();
+        savePlayerCookie(playerNameInput.value, teamSelect ? teamSelect.value : '');
+        updatePlayerHistoryUI();
       });
       playerNameInput.addEventListener('keydown', e => { if (e.key === 'Enter') startGame(); });
+      if (teamSelect) {
+        teamSelect.addEventListener('change', () => {
+          savePlayerCookie(playerNameInput.value, teamSelect.value);
+          updatePlayerHistoryUI();
+        });
+      }
       document.getElementById('btn-lb').addEventListener('click', () => showLeaderboard());
       document.getElementById('btn-lb-go').addEventListener('click', () => showLeaderboard());
       loadTeams();
       initDrag();
+      const cookieProfile = readPlayerCookie();
+      if (cookieProfile.name || cookieProfile.team) {
+        applyPlayerProfile(cookieProfile.name, cookieProfile.team);
+      }
     });
   </script>
 </body>
